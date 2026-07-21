@@ -1,0 +1,4 @@
+python-telegram-bot
+yfinance
+requests
+anthropic
