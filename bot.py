@@ -111,7 +111,10 @@ def generate_report(ticker: str) -> str:
         max_tokens=1200,
         messages=[{"role": "user", "content": prompt}],
     )
-    return message.content[0].text
+    for block in message.content:
+        if block.type == "text":
+            return block.text
+    return "Something went wrong generating this report — try again."
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
