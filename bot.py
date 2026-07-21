@@ -6,7 +6,7 @@ import anthropic
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"], timeout=30.0)
 
 _CIK_CACHE = {}
 
@@ -106,11 +106,14 @@ def generate_report(ticker: str) -> str:
         f"{data_summary}"
     )
 
-    message = client.messages.create(
-        model="claude-sonnet-5",
-        max_tokens=1200,
-        messages=[{"role": "user", "content": prompt}],
-    )
+try:
+        message = client.messages.create(
+            model="claude-sonnet-5",
+            max_tokens=1200,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception as e:
+        return f"Report generation failed for {ticker}: {e}"
     for block in message.content:
         if block.type == "text":
             return block.text
