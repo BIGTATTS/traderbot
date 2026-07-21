@@ -106,7 +106,7 @@ def generate_report(ticker: str) -> str:
         f"{data_summary}"
     )
 
-try:
+    try:
         message = client.messages.create(
             model="claude-sonnet-5",
             max_tokens=1200,
@@ -114,6 +114,7 @@ try:
         )
     except Exception as e:
         return f"Report generation failed for {ticker}: {e}"
+
     for block in message.content:
         if block.type == "text":
             return block.text
