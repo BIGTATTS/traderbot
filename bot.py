@@ -24,7 +24,7 @@ def get_pct_change(ticker: str):
     last_close = data['Close'].iloc[-1]
     return round((last_close - prev_close) / prev_close * 100, 2)
 
-def get_news(ticker: str, limit: int = 3):
+def get_news(ticker: str, limit: int = 6):
     try:
         items = yf.Ticker(ticker).news or []
     except Exception:
@@ -53,10 +53,10 @@ def get_cik(ticker: str):
             return None
     return _CIK_CACHE.get(ticker.upper())
 
-def get_latest_filing(ticker: str):
+def get_recent_filings(ticker: str, limit: int = 5):
     cik = get_cik(ticker)
     if not cik:
-        return None
+        return []
     try:
         resp = requests.get(
             f"https://data.sec.gov/submissions/CIK{cik}.json",
@@ -66,17 +66,18 @@ def get_latest_filing(ticker: str):
         recent = resp.json().get("filings", {}).get("recent", {})
         forms = recent.get("form", [])
         dates = recent.get("filingDate", [])
-        if not forms:
-            return None
-        return {"form": forms[0], "date": dates[0]}
+        filings = []
+        for i in range(min(limit, len(forms))):
+            filings.append({"form": forms[i], "date": dates[i]})
+        return filings
     except Exception:
-        return None
+        return []
 
 def generate_report(ticker: str) -> str:
     price = get_price(ticker)
     pct = get_pct_change(ticker)
-    news = get_news(ticker)
-    filing = get_latest_filing(ticker)
+    news = get_news(ticker, limit=6)
+    filings = get_recent_filings(ticker, limit=5)
 
     if price is None:
         return f"Couldn't find any data for {ticker}. Double check the ticker symbol."
@@ -84,27 +85,30 @@ def generate_report(ticker: str) -> str:
     data_summary = f"Ticker: {ticker}\n"
     data_summary += f"Current price: ${price}\n"
     data_summary += f"Today's move: {pct}%\n" if pct is not None else "Today's move: unavailable\n"
-    if filing:
-        data_summary += f"Most recent SEC filing: {filing['form']} filed on {filing['date']}\n"
+    if filings:
+        data_summary += "Recent SEC filings (most recent first):\n"
+        data_summary += "\n".join(f"- {f['form']} filed {f['date']}" for f in filings) + "\n"
     else:
-        data_summary += "Most recent SEC filing: none found\n"
+        data_summary += "Recent SEC filings: none found\n"
     if news:
         data_summary += "Recent headlines:\n" + "\n".join(f"- {h}" for h in news)
     else:
         data_summary += "Recent headlines: none found"
 
     prompt = (
-        "You are a sharp, experienced stock trader giving a quick verbal briefing to a colleague. "
-        "Using ONLY the data below, write a natural, conversational briefing on this stock in 4-6 sentences. "
-        "Sound like a trader talking, not a report. Mention the price action, the most recent SEC filing if there is one, "
-        "and weave in the news naturally. Do not invent any facts not in the data. "
-        "If data is missing, just don't mention it, don't apologize for it.\n\n"
+        "You are a sharp, experienced stock trader writing a full briefing on this stock for a colleague at your desk. "
+        "Using ONLY the data below, write it out the way a real trader would \u2014 in your own words, natural and direct, "
+        "no corporate report formatting, no headers, no bullet points, no fixed structure. "
+        "Cover what actually matters here: the price action and what it means, the most recent SEC filing and why it's relevant "
+        "if it is, and how the recent news fits into the picture. Give your honest read on what's going on with this name, "
+        "not just a recitation of facts. Write as much as the situation actually warrants \u2014 don't pad it, but don't cut it short either. "
+        "Do not invent any facts not in the data below. If something is missing, just don't mention it, don't apologize for it.\n\n"
         f"{data_summary}"
     )
 
     message = client.messages.create(
         model="claude-sonnet-5",
-        max_tokens=400,
+        max_tokens=1200,
         messages=[{"role": "user", "content": prompt}],
     )
     return message.content[0].text
@@ -112,19 +116,24 @@ def generate_report(ticker: str) -> str:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "VKC Trader Bot\n\n"
-        "Send /report TICKER and I'll pull the price action, latest SEC filing, and recent news, "
-        "then give you a trader-style briefing.\n\n"
+        "Send /report TICKER and I'll pull the price action, latest SEC filings, and recent news, "
+        "then give you a full trader-style briefing.\n\n"
+        "You can also do multiple at once: /report EDBL AAPL TSLA\n\n"
         "Example: /report EDBL"
     )
 
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Usage: /report TICKER")
+        await update.message.reply_text("Usage: /report TICKER [TICKER2 TICKER3 ...]")
         return
-    ticker = context.args[0].upper()
-    await update.message.reply_text(f"Pulling the latest on {ticker}...")
-    text = await asyncio.to_thread(generate_report, ticker)
-    await update.message.reply_text(text)
+    tickers = [t.upper() for t in context.args]
+    if len(tickers) > 1:
+        await update.message.reply_text(f"Pulling reports on {', '.join(tickers)}...")
+    else:
+        await update.message.reply_text(f"Pulling the latest on {tickers[0]}...")
+    for ticker in tickers:
+        text = await asyncio.to_thread(generate_report, ticker)
+        await update.message.reply_text(text)
 
 app = Application.builder().token(os.environ["BOT_TOKEN"]).build()
 app.add_handler(CommandHandler("start", start))
