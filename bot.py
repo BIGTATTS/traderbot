@@ -167,12 +167,60 @@ def generate_report(ticker: str) -> str:
             return block.text
     return "Something went wrong generating this report — try again."
 
+def generate_comparison(ticker1: str, ticker2: str) -> str:
+    def gather(t):
+        price = get_price(t)
+        pct = get_pct_change(t)
+        news = get_news(t, limit=4)
+        filings = get_recent_filings(t, limit=3)
+        block = f"--- {t} ---\n"
+        if price is None:
+            return block + "no data found\n"
+        block += f"Price: ${price}\n"
+        block += f"Today's move: {pct}%\n" if pct is not None else "Today's move: unavailable\n"
+        if filings:
+            block += "Recent filings: " + "; ".join(f"{f['form']} ({f['date']})" for f in filings) + "\n"
+        else:
+            block += "Recent filings: none found\n"
+        if news:
+            block += "Headlines: " + " | ".join(news) + "\n"
+        else:
+            block += "Headlines: none found\n"
+        return block
+
+    data1 = gather(ticker1)
+    data2 = gather(ticker2)
+
+    prompt = (
+        "You are a sharp, experienced stock trader giving a direct head-to-head comparison of two stocks for a colleague. "
+        "Using ONLY the data below, compare them directly against each other \u2014 which one looks stronger right now and why, "
+        "how their price action, filings, and news differ, and your honest read on which one you'd rather be in if you had to "
+        "pick just one today. Write naturally, in your own words \u2014 no headers, no bullet points, no fixed structure. "
+        "Do not invent any facts not in the data below. If something is missing, don't mention it or apologize for it.\n\n"
+        f"{data1}\n{data2}"
+    )
+
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-5",
+            max_tokens=1200,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception as e:
+        return f"Comparison failed: {e}"
+
+    for block in message.content:
+        if block.type == "text":
+            return block.text
+    return "Something went wrong generating this comparison \u2014 try again."
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "VKC Trader Bot\n\n"
         "Send /report TICKER and I'll pull the price action, latest SEC filings, and recent news, "
         "then give you a full trader-style briefing.\n\n"
         "You can also do multiple at once: /report EDBL AAPL TSLA\n\n"
+        "/compare TICKER1 TICKER2 - head-to-head comparison of two stocks\n\n"
         "Example: /report EDBL"
     )
 
@@ -189,8 +237,18 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = await asyncio.to_thread(generate_report, ticker)
         await update.message.reply_text(text)
 
+async def compare(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) != 2:
+        await update.message.reply_text("Usage: /compare TICKER1 TICKER2")
+        return
+    ticker1, ticker2 = context.args[0].upper(), context.args[1].upper()
+    await update.message.reply_text(f"Comparing {ticker1} vs {ticker2}...")
+    text = await asyncio.to_thread(generate_comparison, ticker1, ticker2)
+    await update.message.reply_text(text)
+
 app = Application.builder().token(os.environ["BOT_TOKEN"]).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("report", report))
+app.add_handler(CommandHandler("compare", compare))
 
 app.run_polling()
