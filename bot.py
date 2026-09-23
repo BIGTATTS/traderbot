@@ -6,25 +6,66 @@ import anthropic
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+import json
+import redis as redis_lib
+
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"], timeout=30.0)
+
+try:
+    redis_client = redis_lib.from_url(os.environ["REDIS_URL"], decode_responses=True)
+    redis_client.ping()
+except Exception:
+    redis_client = None
+
+def cache_get(key):
+    if redis_client is None:
+        return None
+    try:
+        val = redis_client.get(key)
+        return json.loads(val) if val else None
+    except Exception:
+        return None
+
+def cache_set(key, value, ttl=180):
+    if redis_client is None:
+        return
+    try:
+        redis_client.set(key, json.dumps(value), ex=ttl)
+    except Exception:
+        pass
 
 _CIK_CACHE = {}
 
 def get_price(ticker: str):
+    cache_key = f"price:{ticker}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
     data = yf.Ticker(ticker).history(period="1d")
     if data.empty:
         return None
-    return round(data['Close'].iloc[-1], 2)
-
+    price = round(data['Close'].iloc[-1], 2)
+    cache_set(cache_key, price, ttl=180)
+    return price
 def get_pct_change(ticker: str):
+    cache_key = f"pct:{ticker}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
     data = yf.Ticker(ticker).history(period="2d")
     if len(data) < 2:
         return None
     prev_close = data['Close'].iloc[-2]
     last_close = data['Close'].iloc[-1]
-    return round((last_close - prev_close) / prev_close * 100, 2)
+    pct = round((last_close - prev_close) / prev_close * 100, 2)
+    cache_set(cache_key, pct, ttl=180)
+    return pct
 
 def get_news(ticker: str, limit: int = 6):
+    cache_key = f"news:{ticker}:{limit}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
     try:
         items = yf.Ticker(ticker).news or []
     except Exception:
@@ -35,6 +76,7 @@ def get_news(ticker: str, limit: int = 6):
         title = content.get("title") or item.get("title")
         if title:
             headlines.append(title)
+    cache_set(cache_key, headlines, ttl=300)
     return headlines
 
 def get_cik(ticker: str):
@@ -54,6 +96,10 @@ def get_cik(ticker: str):
     return _CIK_CACHE.get(ticker.upper())
 
 def get_recent_filings(ticker: str, limit: int = 5):
+    cache_key = f"filings:{ticker}:{limit}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
     cik = get_cik(ticker)
     if not cik:
         return []
@@ -69,6 +115,7 @@ def get_recent_filings(ticker: str, limit: int = 5):
         filings = []
         for i in range(min(limit, len(forms))):
             filings.append({"form": forms[i], "date": dates[i]})
+        cache_set(cache_key, filings, ttl=1800)
         return filings
     except Exception:
         return []
