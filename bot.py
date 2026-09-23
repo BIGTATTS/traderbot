@@ -34,6 +34,15 @@ def cache_set(key, value, ttl=180):
     except Exception:
         pass
 
+async def heartbeat_job(context: ContextTypes.DEFAULT_TYPE):
+    if redis_client is None:
+        return
+    try:
+        import datetime as dt
+        from zoneinfo import ZoneInfo
+        redis_client.set("heartbeat:traderbot", dt.datetime.now(ZoneInfo("UTC")).isoformat(), ex=600)
+    except Exception:
+        pass
 _CIK_CACHE = {}
 
 def get_price(ticker: str):
@@ -250,5 +259,7 @@ app = Application.builder().token(os.environ["BOT_TOKEN"]).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("report", report))
 app.add_handler(CommandHandler("compare", compare))
+
+app.job_queue.run_repeating(heartbeat_job, interval=120, first=5)
 
 app.run_polling()
