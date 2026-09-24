@@ -43,6 +43,19 @@ async def heartbeat_job(context: ContextTypes.DEFAULT_TYPE):
         redis_client.set("heartbeat:traderbot", dt.datetime.now(ZoneInfo("UTC")).isoformat(), ex=600)
     except Exception:
         pass
+
+async def startup_notification(context: ContextTypes.DEFAULT_TYPE):
+    owner_id = os.environ.get("OWNER_CHAT_ID")
+    if not owner_id:
+        return
+    try:
+        await context.bot.send_message(
+            chat_id=int(owner_id),
+            text="\u2705 traderbot just started up"
+        )
+    except Exception:
+        pass
+
 _CIK_CACHE = {}
 
 def get_price(ticker: str):
@@ -260,6 +273,7 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("report", report))
 app.add_handler(CommandHandler("compare", compare))
 
+app.job_queue.run_once(startup_notification, when=3)
 app.job_queue.run_repeating(heartbeat_job, interval=120, first=5)
 
 app.run_polling()
